@@ -24,7 +24,7 @@ First, we show a video of the expected behavior (if the demo is succesful).
 
 To run this demo, you can setup any generic Duckietown which complies to the appereance specifications presented in [the duckietown specs](+opmanual_duckietown#duckietown-specs).  
 
-The only two constraints are that you have good lighting conditions and enough texture in the field of view of the Duckiebot (it can be anything, really, from duckies to street signs to a replica of the Saturn V).
+The only two constraints are that you have good lighting conditions and enough possible features in the field of view of the Duckiebot (they can be anything, really, from duckies to street signs to a replica of the Saturn V).
 
 Note: Most of your environment should be static. Otherwise you might get bad results.
 
@@ -41,18 +41,16 @@ Check: Both yout duckiebot and your laptop are connected to the same, stable net
 
 ### Demo instructions {#demo-visualodometry-run}
 
-Step 1: From your computer load the demo container on your duckiebot by typing the command:
+Step 1: From your computer load the demo container on your duckiebot typing the command:
 
     laptop $ docker -H ![hostname].local run -it --net host --memory="800m" ---memory-swap="1.8g" --privileged -v /data:/data --name visual_odometry_demo  ![unclear]/visualodo-demo:master18
 
 
-Step 2: Start the graphical user interface container:
+Step 2: Start the graphical user interface:
 
     laptop $ dts start_gui_tools ![hostname]
 
-Step 3: Download the rviz configuration file `odometry_rviz_conf` from our repo to your laptop-container by running:
-
-    laptop-container $ wget https://raw.githubusercontent.com/duckietown/duckietown-visualodo/master/odometry_rviz_conf.rviz
+Step 3: Download the rviz configuration file `odometry_rviz_conf` from our repo to your laptop
 
 Step 4: Check that you can visualize the list of topics in the duckiebot from the laptop:
 
@@ -81,7 +79,7 @@ Symptom: The estimated pose is really bad.
 
 Resolution: You might have a too dynamic scene, for the visual odometry to run correctly.
 
-Symptom: The estimated pose is really bad and the scene is not dynamic
+Symptom: The estimated pose is really bad and the scene is dynamic
 
 Resolution: Debug the pipeline by turning on the plotting parameters
 
@@ -147,13 +145,15 @@ At each frame, we gather one image and we discard the oldest one, so to keep alw
 
 Then we need to match the features, with either `KNN` or using the Hamming distance (default). If KNN is chosen, its matches can be filtered using a first-neighbor-to-second-neighbor ratio threshold. Empirically Bruteforce Hamming distance has proven to outperform KNN in the duckietown environment.
 
-Matches may be further filtered using histogram fitting (activated by default, can be turned off). This means that we fit a gaussian distribution to the lenght and angle of the matches, and we remove the ones further than `x` standard deviations from the average value. These `x` values can be set in the parameters yaml file.
+Correct Matches are extremely important in visual odometry, the most widely accepted solution is RANSAC. However, since the computational complexity is exponential to the number of points that generate a hypothesis, 6-DOF solution e.g. 5-point RANSAC is not suitable to our Duckiebot. Furthermore, our incremental visual-odometry doesn't provide an 3D point map or even bundle adjustment, the inevitable drift of odometry would result in unexplainable poses, e.g. the Duckiebot could fly in the air. Therefore leveraging the computional compacity and utility of on-board solution, we seek for more specific approaches to Duckietown and Duckiebot.
 
-Then we divide the feature pairs between far and close regions, to decouple the estimate of the translation vector to the estimate of the rotation matrix (BangleiGuan et.al. 2018).  
+Matches may be further filtered using histogram fitting (activated by default, can be turned off). Each pair of matches can draw a line segment on the image. Due to the planer motion of Duckiebot, line segments should be consistent in terms of length and angle. This intuition can be confirmed by observing that considerable amount of outliers are keypoints on the egdes  of lane or repetitive textures on the "road" matt, matches of these keypoints yields obvious error. To screen such outliers, we fit a gaussian distribution to the length and angle of the matches, and we remove the ones further than `x` standard deviations from the average value. These `x` values can be set in the parameters yaml file.
 
-After having computed the motion matrix, we apply it to the previous duckiebot rotation it to get a new estimate of the pose.
+Observed that repeatable keypoints and reliable matches always lie in the surrondings of Duckietown or the corners of road lanes, and noticed that translation only result in small pixel shift for further keypoints, hence we divide the feature pairs between far and close regions, to decouple the estimate of the translation vector to the estimate of the rotation matrix. The rotation matrix is estimated by the method in [1], where our case is perfectly suited and their one-point estimate is extremely efficient. After having computed the rotation matrix, we concatenate it to the previous rotation to get a new estimate of the pose.
 
 The translation vector is assumed to be always a one-component vector (pointing towards the front direction), and is scaled by a factor of the duckiebot linear velocity command.
+
+[1] Guan, Banglei, Pascal Vasseur, Cédric Demonceaux, and Friedrich Fraundorfer. "Visual odometry using a homography formulation with decoupled rotation and translation estimation using minimal solutions." In International Conference on Robotics and Automation-ICRA. 2018.
 
 #### Software architecture
 
@@ -176,9 +176,14 @@ visual_odometry_node:
   * Published topics:
 
     - path
+    - odometry
 
 
 
 ### Future development
 
-The pipeline can be improved by performing bundle adjustment, however the computational burdain in that case is unclear. Other functionalities which could be interesting are a controller based on the visual odometry to travel intersections, and the placement of the path inside a given map.
+The visual odometry algorithm specifically for Duckiebot is far from perfectly sovled, and there are several methods to explore.
+
+The mask to classify keypoints to "near" and "far" actually act as a prior to visual odometry. Currently the mask is hand-crafed and works decently. In the future, we could use Deep Neural Network to train a better mask, or even generate one for every frame to filter out unreliable keypoints e.g. those on moving objects, which is the paradiam of Semantic-SLAM. The pipeline can also be improved by performing bundle adjustment, however the computational burdain in that case is unclear.
+
+Other functionalities which could be interesting are a controller based on the visual odometry to travel intersections, and the placement of the path inside a given map.
